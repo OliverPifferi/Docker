@@ -1,0 +1,130 @@
+---
+version: '3.4'
+
+services:
+  authentik_postgresql:
+    image: docker.io/library/postgres:16-alpine
+    container_name: authentik_postgresql
+    hostname: authentik_postgresql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 5s
+    volumes:
+      - /opt/authentik/db:/var/lib/postgresql/data
+    networks:
+      - authentik-internal        # internal communications
+    environment:
+      - POSTGRES_PASSWORD=authentik
+      - POSTGRES_USER=authentik
+      - POSTGRES_DB=authentik
+
+  authentik_redis:
+    image: docker.io/library/redis:alpine
+    container_name: authentik_redis
+    hostname: authentik_redis
+    command: --save 60 1 --loglevel warning
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 3s
+    networks:
+      - authentik-internal        # internal communications
+    volumes:
+      - /opt/authentik/redis:/data
+  
+  authentik:
+    image: ghcr.io/goauthentik/server:latest
+    container_name: authentik
+    hostname: authentik
+    restart: unless-stopped
+    command: server
+    networks:
+      - authentik-internal        # internal communications
+    environment:
+      AUTHENTIK_REDIS__HOST: authentik_redis                          # the hostname for redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik_postgresql                # the hostname for postgresql
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: authentik
+      AUTHENTIK_ERROR_REPORTING__ENABLED: true          
+      AUTHENTIK_SECRET_KEY: MakeThisYourSecretKey
+      AUTHENTIK_LOG_LEVEL: info
+      AUTHENTIK_EMAIL__HOST: YourSMTPHost
+      AUTHENTIK_EMAIL__PORT: 587
+      AUTHENTIK_EMAIL__USERNAME: YourEMailUserName                # Don't add quotation marks around the user or password
+      AUTHENTIK_EMAIL__PASSWORD: YourEMailPassword           # Don't add quotation marks around the user or password
+      AUTHENTIK_EMAIL__USE_TLS: true                
+      AUTHENTIK_EMAIL__USE_SSL: false             
+      AUTHENTIK_EMAIL__TIMEOUT: 10
+      AUTHENTIK_EMAIL__FROM: "YourFromMailAddress"     # Email address authentik will send from, should have a correct @domain
+    volumes:
+      - /opt/authentik/media:/media
+      - /opt/authentik/templates:/templates
+    ports:
+      - "9000:9000"               # HTTP
+      - "9443:9443"               # HTTPS
+
+  authentik_worker:
+    image: ghcr.io/goauthentik/server:latest
+    container_name: authentik_worker
+    hostname: authentik_worker
+    restart: unless-stopped
+    command: worker
+    networks:
+      - authentik-internal        # internal communications
+    environment:
+      AUTHENTIK_REDIS__HOST: authentik_redis                       # the hostname for redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik_postgresql             # the hostname for postgresql
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: authentik
+      AUTHENTIK_ERROR_REPORTING__ENABLED: true              
+      AUTHENTIK_SECRET_KEY: MakeThisYourSecretKey
+      AUTHENTIK_LOG_LEVEL: info
+      AUTHENTIK_EMAIL__HOST: YourSMTPHost
+      AUTHENTIK_EMAIL__PORT: 587
+      AUTHENTIK_EMAIL__USERNAME: YourEMailUserName                # Don't add quotation marks around the user or password
+      AUTHENTIK_EMAIL__PASSWORD: YourEMailPassword           # Don't add quotation marks around the user or password
+      AUTHENTIK_EMAIL__USE_TLS: true          
+      AUTHENTIK_EMAIL__USE_SSL: false               
+      AUTHENTIK_EMAIL__TIMEOUT: 10
+      AUTHENTIK_EMAIL__FROM: "YourFromMailAddress"      # Email address authentik will send from, should have a correct @domain
+    # `user: root` and the docker socket volume are optional.
+    # See more for the docker socket integration here:
+    # https://goauthentik.io/docs/outposts/integrations/docker
+    # Removing `user: root` also prevents the worker from fixing the permissions
+    # on the mounted folders, so when removing this make sure the folders have the correct UID/GID
+    # (1000:1000 by default)
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/authentik/media:/media
+      - /opt/authentik/certs:/certs
+      - /opt/authentik/templates:/templates
+
+  authentik_geoip:
+    image: maxmindinc/geoipupdate:latest
+    container_name: authentik_geoip
+    hostname: authentik_geoip
+
+    restart: unless-stopped
+    environment:
+            GEOIPUPDATE_EDITION_IDS: "GeoLite2-City"
+            GEOIPUPDATE_FREQUENCY: "8"
+            GEOIPUPDATE_ACCOUNT_ID: "YourGeoAccountID"
+            GEOIPUPDATE_LICENSE_KEY: "YourGeoLicenseKey"
+    networks:
+      - authentik-internal        # internal communications
+    volumes:
+      - /opt/authentik/geoip:/geoip
+
+networks:
+  authentik-internal:
+    driver: bridge
